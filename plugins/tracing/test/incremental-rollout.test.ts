@@ -4,7 +4,7 @@ import * as path from "node:path";
 
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Config } from "../src/config.js";
 import { openIncrementalRollout } from "../src/rollout.js";
@@ -21,6 +21,7 @@ const config: Config = {
   base_url: "http://127.0.0.1",
   skill_tags: true,
   max_history_chars: 2_000,
+  discover_subagents: true,
   debug: false,
   fail_on_error: true,
 };
@@ -387,5 +388,31 @@ describe("incremental root Stop hooks", () => {
     expect(
       (await buildSubagentIndex(own, { includeEarlierDays: true })).byThread.has("ancient-child"),
     ).toBe(true);
+  });
+
+  it("reads no session directory at all when subagent discovery is disabled", async () => {
+    const file = stage();
+    const day = path.dirname(file);
+    fs.writeFileSync(
+      path.join(day, "rollout-child.jsonl"),
+      row("session_meta", { id: "child-session", parent_thread_id: "test-session" }) + turn(1),
+    );
+    const second = turn(1).replace(
+      event("task_complete", { turn_id: "t1" }),
+      event("collab_agent_spawn_end", { new_thread_id: "child-session", call_id: "call-1" }) +
+        event("task_complete", { turn_id: "t1" }),
+    );
+    fs.writeFileSync(file, row("session_meta", { id: "test-session" }) + second);
+    const readdir = vi.spyOn(fs.promises, "readdir");
+    try {
+      expect(await convertRollout(file, options(file, { discover_subagents: false }))).toEqual([
+        "t1",
+      ]);
+      expect(readdir).not.toHaveBeenCalled();
+    } finally {
+      readdir.mockRestore();
+    }
+    expect(exporter.getFinishedSpans().some((s) => s.name === "Codex Subagent Turn")).toBe(false);
+    expect(exporter.getFinishedSpans().some((s) => s.name === "Codex Turn")).toBe(true);
   });
 });

@@ -719,11 +719,15 @@ export async function convertRollout(
   // Child/ancestor traversal keeps its full-history ownership semantics. Only
   // an acknowledged root hook may resume and persist an incremental cursor.
   const meta = await readSessionMeta(rolloutFile);
-  const subagentIndex =
+  const subagentIndex: SubagentIndex =
     options.subagentIndex ??
-    (await buildSubagentIndex(rolloutFile, {
-      includeEarlierDays: meta?.parentThreadId !== undefined,
-    }));
+    (options.config.discover_subagents
+      ? await buildSubagentIndex(rolloutFile, {
+          includeEarlierDays: meta?.parentThreadId !== undefined,
+        })
+      : // Opt-out: never read the sessions directory. Only this rollout is
+        // traced; subagent sessions are intentionally not collected.
+        { byParent: new Map(), byThread: new Map() });
   const hasSubagents =
     meta?.parentThreadId !== undefined ||
     (subagentIndex.byParent.get(meta?.threadId ?? "")?.length ?? 0) > 0;
